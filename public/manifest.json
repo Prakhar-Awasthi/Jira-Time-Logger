@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Jira Bulk Time Logger",
+  "version": "1.0.0",
+  "description": "Bulk log time to Jira and view weekly time logs",
+  "action": {
+    "default_title": "Open Jira Time Logger"
+  },
+  "options_page": "src/app/app.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://*.atlassian.net/*"]
+}
