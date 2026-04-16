@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { parseInput } from "../utils/parser";
-import { logWork, fetchWorklogs, Worklog, formatJiraStarted, formatDate, JiraUser, extractUsersFromWorklogs, extractDateFromISOString, getDayOfWeekFromISOString } from "../utils/jira";
+import { logWork, fetchWorklogs, Worklog, formatJiraStarted, formatDate, JiraUser, extractUsersFromWorklogs, extractTeamsFromWorklogs, extractDateFromISOString, getDayOfWeekFromISOString } from "../utils/jira";
 
-type Tab = "log" | "range" | "week";
+type Tab = "log" | "range" | "week" | "report";
 type Theme = "light" | "dark";
 
 function getTodayString() {
@@ -38,8 +38,13 @@ export default function App() {
   const [result, setResult] = useState("");
   const [rangeWorklogs, setRangeWorklogs] = useState<Worklog[]>([]);
   const [weekWorklogs, setWeekWorklogs] = useState<Worklog[]>([]);
+  const [reportWorklogs, setReportWorklogs] = useState<Worklog[]>([]);
+  const [reportStartDate, setReportStartDate] = useState(getTodayString());
+  const [reportEndDate, setReportEndDate] = useState(getTodayString());
   const [allUsers, setAllUsers] = useState<JiraUser[]>([]);
   const [selectedUser, setSelectedUser] = useState<string>("all");
+  const [allTeams, setAllTeams] = useState<string[]>([]);
+  const [selectedTeam, setSelectedTeam] = useState<string>("all");
   const [loading, setLoading] = useState(false);
 
   // Load saved credentials
@@ -102,9 +107,11 @@ export default function App() {
       const logs = await fetchWorklogs(jiraUrl, email, token, start, end);
       setRangeWorklogs(logs);
       
-      // Extract unique users from the fetched worklogs
+      // Extract unique users and teams from the fetched worklogs
       const users = extractUsersFromWorklogs(logs);
       setAllUsers(users);
+      const teams = extractTeamsFromWorklogs(logs);
+      setAllTeams(teams);
     } catch (err: any) {
       setResult(`❌ ${err.message}`);
     } finally {
@@ -129,9 +136,35 @@ export default function App() {
       const logs = await fetchWorklogs(jiraUrl, email, token, start, end);
       setWeekWorklogs(logs);
       
-      // Extract unique users from the fetched worklogs
+      // Extract unique users and teams from the fetched worklogs
       const users = extractUsersFromWorklogs(logs);
       setAllUsers(users);
+      const teams = extractTeamsFromWorklogs(logs);
+      setAllTeams(teams);
+    } catch (err: any) {
+      setResult(`❌ ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadReportWorklogs() {
+    try {
+      setLoading(true);
+      const start = new Date(`${reportStartDate}T00:00:00`);
+      const end = new Date(`${reportEndDate}T23:59:59`);
+      if (end < start) {
+        throw new Error("End date must be on or after start date");
+      }
+
+      const logs = await fetchWorklogs(jiraUrl, email, token, start, end);
+      setReportWorklogs(logs);
+      
+      // Extract unique users and teams from the fetched worklogs
+      const users = extractUsersFromWorklogs(logs);
+      setAllUsers(users);
+      const teams = extractTeamsFromWorklogs(logs);
+      setAllTeams(teams);
     } catch (err: any) {
       setResult(`❌ ${err.message}`);
     } finally {
@@ -159,15 +192,55 @@ export default function App() {
     }
   }, [activeTab, weekDate, jiraUrl, email, token]);
 
-  // Filter worklogs based on selected user
+  useEffect(() => {
+    if (activeTab === "report" && jiraUrl && email && token) {
+      const timeoutId = window.setTimeout(() => {
+        loadReportWorklogs();
+      }, 300);
+
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [activeTab, reportStartDate, reportEndDate, jiraUrl, email, token]);
+
+  // Get available users based on selected team
+  const getAvailableUsers = (worklogs: Worklog[]) => {
+    let filtered = worklogs;
+    if (selectedTeam !== "all") {
+      filtered = filtered.filter(wl => wl.team === selectedTeam);
+    }
+    return extractUsersFromWorklogs(filtered);
+  };
+
+  // Get available teams based on selected user
+  const getAvailableTeams = (worklogs: Worklog[]) => {
+    let filtered = worklogs;
+    if (selectedUser !== "all") {
+      filtered = filtered.filter(wl => wl.authorEmail === selectedUser);
+    }
+    return extractTeamsFromWorklogs(filtered);
+  };
+
+  // Filter worklogs based on selected user and team
   const getFilteredRangeWorklogs = () => {
-    if (selectedUser === "all") return rangeWorklogs;
-    return rangeWorklogs.filter(wl => wl.authorEmail === selectedUser);
+    let filtered = rangeWorklogs;
+    if (selectedUser !== "all") {
+      filtered = filtered.filter(wl => wl.authorEmail === selectedUser);
+    }
+    if (selectedTeam !== "all") {
+      filtered = filtered.filter(wl => wl.team === selectedTeam);
+    }
+    return filtered;
   };
 
   const getFilteredWeekWorklogs = () => {
-    if (selectedUser === "all") return weekWorklogs;
-    return weekWorklogs.filter(wl => wl.authorEmail === selectedUser);
+    let filtered = weekWorklogs;
+    if (selectedUser !== "all") {
+      filtered = filtered.filter(wl => wl.authorEmail === selectedUser);
+    }
+    if (selectedTeam !== "all") {
+      filtered = filtered.filter(wl => wl.team === selectedTeam);
+    }
+    return filtered;
   };
 
   const groupedByDate = () => {
@@ -220,6 +293,36 @@ export default function App() {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${hours}h ${minutes}m`;
+  };
+
+  const generateTeamReport = () => {
+    // Filter by selected team if one is selected
+    let filteredLogs = reportWorklogs;
+    if (selectedTeam !== "all") {
+      filteredLogs = filteredLogs.filter(wl => wl.team === selectedTeam);
+    }
+
+    // Group by user
+    const userMap = new Map<string, { user: JiraUser; total: number; worklogs: Worklog[] }>();
+    
+    filteredLogs.forEach(wl => {
+      if (!userMap.has(wl.authorEmail)) {
+        userMap.set(wl.authorEmail, {
+          user: { emailAddress: wl.authorEmail, displayName: wl.author },
+          total: 0,
+          worklogs: []
+        });
+      }
+      const userData = userMap.get(wl.authorEmail)!;
+      userData.total += wl.timeSpentSeconds;
+      userData.worklogs.push(wl);
+    });
+
+    // Convert to array and sort by name
+    const report = Array.from(userMap.values());
+    report.sort((a, b) => a.user.displayName.localeCompare(b.user.displayName));
+    
+    return report;
   };
 
   return (
@@ -289,6 +392,12 @@ export default function App() {
             onClick={() => setActiveTab("week")}
           >
             📅 Weekly Logs
+          </button>
+          <button 
+            className={`tab ${activeTab === "report" ? "active" : ""}`}
+            onClick={() => setActiveTab("report")}
+          >
+            📋 Team Report
           </button>
         </div>
       </header>
@@ -398,9 +507,36 @@ export default function App() {
                   }}
                 >
                   <option value="all">{loading ? "Loading users..." : "Everyone"}</option>
-                  {allUsers.map((user) => (
+                  {getAvailableUsers(rangeWorklogs).map((user) => (
                     <option key={user.emailAddress} value={user.emailAddress}>
                       {user.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="input-group">
+                <label>🏢 Team</label>
+                <select
+                  value={selectedTeam}
+                  onChange={(e) => setSelectedTeam(e.target.value)}
+                  disabled={loading || allTeams.length === 0}
+                  style={{
+                    width: "100%",
+                    padding: "1rem 1.25rem",
+                    border: "2px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: "1rem",
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    fontFamily: "inherit",
+                    cursor: loading || allTeams.length === 0 ? "not-allowed" : "pointer",
+                    opacity: loading || allTeams.length === 0 ? 0.6 : 1
+                  }}
+                >
+                  <option value="all">{loading ? "Loading teams..." : "All Teams"}</option>
+                  {getAvailableTeams(rangeWorklogs).map((team) => (
+                    <option key={team} value={team}>
+                      {team}
                     </option>
                   ))}
                 </select>
@@ -460,7 +596,7 @@ export default function App() {
               <strong>Total Range:</strong> {formatSeconds(getFilteredRangeWorklogs().reduce((sum, wl) => sum + wl.timeSpentSeconds, 0))}
             </div>
           </div>
-        ) : (
+        ) : activeTab === "week" ? (
           <div className="view-section">
             <div className="view-header">
               <h2>Time Logs by Week</h2>
@@ -494,9 +630,36 @@ export default function App() {
                   }}
                 >
                   <option value="all">{loading ? "Loading users..." : "Everyone"}</option>
-                  {allUsers.map((user) => (
+                  {getAvailableUsers(weekWorklogs).map((user) => (
                     <option key={user.emailAddress} value={user.emailAddress}>
                       {user.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="input-group">
+                <label>🏢 Team</label>
+                <select
+                  value={selectedTeam}
+                  onChange={(e) => setSelectedTeam(e.target.value)}
+                  disabled={loading || allTeams.length === 0}
+                  style={{
+                    width: "100%",
+                    padding: "1rem 1.25rem",
+                    border: "2px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: "1rem",
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    fontFamily: "inherit",
+                    cursor: loading || allTeams.length === 0 ? "not-allowed" : "pointer",
+                    opacity: loading || allTeams.length === 0 ? 0.6 : 1
+                  }}
+                >
+                  <option value="all">{loading ? "Loading teams..." : "All Teams"}</option>
+                  {getAvailableTeams(weekWorklogs).map((team) => (
+                    <option key={team} value={team}>
+                      {team}
                     </option>
                   ))}
                 </select>
@@ -558,6 +721,175 @@ export default function App() {
 
             <div className="range-summary">
               <strong>Total Week (Mon-Fri):</strong> {formatSeconds(groupedByWeekday().filter(d => d.working).reduce((sum, d) => sum + d.total, 0))}
+            </div>
+          </div>
+        ) : (
+          <div className="view-section">
+            <div className="view-header">
+              <h2>Team Report</h2>
+              <button 
+                className="btn-secondary" 
+                onClick={loadReportWorklogs}
+                disabled={loading}
+              >
+                {loading ? "Loading..." : "Refresh"}
+              </button>
+            </div>
+
+            <div className="range-controls">
+              <div className="input-group">
+                <label>🏢 Team</label>
+                <select
+                  value={selectedTeam}
+                  onChange={(e) => setSelectedTeam(e.target.value)}
+                  disabled={loading || allTeams.length === 0}
+                  style={{
+                    width: "100%",
+                    padding: "1rem 1.25rem",
+                    border: "2px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: "1rem",
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    fontFamily: "inherit",
+                    cursor: loading || allTeams.length === 0 ? "not-allowed" : "pointer",
+                    opacity: loading || allTeams.length === 0 ? 0.6 : 1
+                  }}
+                >
+                  <option value="all">{loading ? "Loading teams..." : "All Teams"}</option>
+                  {extractTeamsFromWorklogs(reportWorklogs).map((team) => (
+                    <option key={team} value={team}>
+                      {team}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="input-group">
+                <label>Start Date</label>
+                <input
+                  type="date"
+                  value={reportStartDate}
+                  onChange={(e) => setReportStartDate(e.target.value)}
+                />
+              </div>
+              <div className="input-group">
+                <label>End Date</label>
+                <input
+                  type="date"
+                  value={reportEndDate}
+                  onChange={(e) => setReportEndDate(e.target.value)}
+                />
+              </div>
+              <button 
+                className="btn-primary range-button" 
+                onClick={loadReportWorklogs}
+                disabled={loading || !jiraUrl || !email || !token}
+              >
+                {loading ? "Loading..." : "Get Report"}
+              </button>
+            </div>
+
+            <div className="report-table-container" style={{ 
+              overflowX: "auto", 
+              marginTop: "2rem",
+              border: "2px solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              background: "var(--surface)"
+            }}>
+              <table style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.95rem"
+              }}>
+                <thead>
+                  <tr style={{
+                    background: "var(--background)",
+                    borderBottom: "2px solid var(--border)"
+                  }}>
+                    <th style={{
+                      padding: "1rem",
+                      textAlign: "left",
+                      fontWeight: 600,
+                      position: "sticky",
+                      top: 0,
+                      background: "var(--background)"
+                    }}>Team Member</th>
+                    <th style={{
+                      padding: "1rem",
+                      textAlign: "left",
+                      fontWeight: 600,
+                      position: "sticky",
+                      top: 0,
+                      background: "var(--background)"
+                    }}>Total Time</th>
+                    <th style={{
+                      padding: "1rem",
+                      textAlign: "left",
+                      fontWeight: 600,
+                      position: "sticky",
+                      top: 0,
+                      background: "var(--background)"
+                    }}>Issues Worked On</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generateTeamReport().length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{
+                        padding: "2rem",
+                        textAlign: "center",
+                        color: "var(--text-secondary)"
+                      }}>
+                        {loading ? "Loading..." : "No data available"}
+                      </td>
+                    </tr>
+                  ) : (
+                    generateTeamReport().map((userData, idx) => (
+                      <tr key={userData.user.emailAddress} style={{
+                        borderBottom: "1px solid var(--border)",
+                        background: idx % 2 === 0 ? "var(--surface)" : "var(--background)"
+                      }}>
+                        <td style={{ padding: "1rem" }}>
+                          <div style={{ fontWeight: 500 }}>{userData.user.displayName}</div>
+                          <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>
+                            {userData.user.emailAddress}
+                          </div>
+                        </td>
+                        <td style={{ padding: "1rem", fontWeight: 600, color: "var(--primary)" }}>
+                          {formatSeconds(userData.total)}
+                        </td>
+                        <td style={{ padding: "1rem" }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                            {Array.from(new Set(userData.worklogs.map(wl => wl.issueKey)))
+                              .sort()
+                              .map(issueKey => (
+                                <span key={issueKey} style={{
+                                  padding: "0.25rem 0.5rem",
+                                  background: "var(--background)",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: "4px",
+                                  fontSize: "0.85rem",
+                                  fontFamily: "monospace"
+                                }}>
+                                  {issueKey}
+                                </span>
+                              ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="range-summary" style={{ marginTop: "1.5rem" }}>
+              <strong>Total Team Time:</strong> {formatSeconds(
+                generateTeamReport().reduce((sum, userData) => sum + userData.total, 0)
+              )}
+              <span style={{ marginLeft: "2rem" }}>
+                <strong>Team Members:</strong> {generateTeamReport().length}
+              </span>
             </div>
           </div>
         )}

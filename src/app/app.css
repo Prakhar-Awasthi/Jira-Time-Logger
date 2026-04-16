@@ -654,3 +654,37 @@ body[data-theme="dark"] .view-section {
     font-size: 1.75rem;
   }
 }
+
+/* Report Table Styles */
+.report-table-container {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.report-table-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.report-table-container::-webkit-scrollbar-track {
+  background: var(--surface-2);
+  border-radius: 4px;
+}
+
+.report-table-container::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.report-table-container::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+.report-table-container table tr {
+  transition: all 0.2s ease;
+}
+
+.report-table-container table tr:hover {
+  background: var(--surface-2) !important;
+  transform: translateX(2px);
+}

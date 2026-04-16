@@ -1,5 +1,6 @@
 export interface Worklog {
   issueKey: string;
+  team: string;
   timeSpent: string;
   timeSpentSeconds: number;
   comment: string;
@@ -11,6 +12,16 @@ export interface Worklog {
 export interface JiraUser {
   emailAddress: string;
   displayName: string;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
 }
 
 export async function logWork(
@@ -82,62 +93,71 @@ export async function fetchWorklogs(
   filterEmail?: string
 ): Promise<Worklog[]> {
   const auth = btoa(`${email}:${token}`);
-  
-  // Get updated worklogs using the worklog/updated endpoint
-  const since = startDate.getTime();
-  
-  const worklogUpdateRes = await fetch(
-    `${baseUrl}/rest/api/3/worklog/updated?since=${since}`,
-    {
+
+  // Jira paginates /worklog/updated responses. Without paging, larger date ranges
+  // can appear truncated to only the most recent subset of worklogs.
+  const worklogIds = new Set<string>();
+  let nextPageUrl = `${baseUrl}/rest/api/3/worklog/updated?since=${startDate.getTime()}`;
+
+  while (nextPageUrl) {
+    const worklogUpdateRes = await fetch(nextPageUrl, {
       headers: {
         "Authorization": `Basic ${auth}`,
         "Accept": "application/json"
       }
+    });
+
+    if (!worklogUpdateRes.ok) {
+      const errorText = await worklogUpdateRes.text();
+      throw new Error(`Failed to fetch worklogs: ${errorText}`);
     }
-  );
 
-  if (!worklogUpdateRes.ok) {
-    const errorText = await worklogUpdateRes.text();
-    throw new Error(`Failed to fetch worklogs: ${errorText}`);
+    const updateData = await worklogUpdateRes.json();
+    (updateData.values || []).forEach((value: any) => {
+      if (value?.worklogId) {
+        worklogIds.add(String(value.worklogId));
+      }
+    });
+
+    nextPageUrl = updateData.lastPage ? "" : (updateData.nextPage || "");
   }
-
-  const updateData = await worklogUpdateRes.json();
-  const worklogIds = (updateData.values || []).map((v: any) => v.worklogId).filter(Boolean);
   
-  if (worklogIds.length === 0) {
+  if (worklogIds.size === 0) {
     return [];
   }
 
-  // Fetch worklog details in one call
-  const worklogListRes = await fetch(
-    `${baseUrl}/rest/api/3/worklog/list`,
-    {
-      method: "POST",
-      headers: {
-        "Authorization": `Basic ${auth}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-      },
-      body: JSON.stringify({
-        ids: worklogIds
-      })
+  const allWorklogs: any[] = [];
+  for (const worklogIdChunk of chunkArray(Array.from(worklogIds), 1000)) {
+    const worklogListRes = await fetch(
+      `${baseUrl}/rest/api/3/worklog/list`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          ids: worklogIdChunk
+        })
+      }
+    );
+
+    if (!worklogListRes.ok) {
+      const errorText = await worklogListRes.text();
+      throw new Error(`Failed to fetch worklog details: ${errorText}`);
     }
-  );
 
-  if (!worklogListRes.ok) {
-    const errorText = await worklogListRes.text();
-    throw new Error(`Failed to fetch worklog details: ${errorText}`);
+    const worklogListData = await worklogListRes.json();
+    allWorklogs.push(...(Array.isArray(worklogListData) ? worklogListData : []));
   }
-
-  const worklogListData = await worklogListRes.json();
-  const allWorklogs = worklogListData || [];
   
   // Get unique issue IDs to fetch issue keys
   const issueIds = [...new Set(allWorklogs.map((wl: any) => wl.issueId).filter(Boolean))];
   
-  // Fetch issue keys for the issue IDs (one call for all)
+  // Fetch issue keys for the issue IDs in batches.
   const issueKeyMap: { [id: string]: string } = {};
-  if (issueIds.length > 0) {
+  for (const issueIdChunk of chunkArray(issueIds, 200)) {
     const issueRes = await fetch(
       `${baseUrl}/rest/api/3/search/jql`,
       {
@@ -148,9 +168,9 @@ export async function fetchWorklogs(
           "Accept": "application/json"
         },
         body: JSON.stringify({
-          jql: `id in (${issueIds.join(",")})`,
+            jql: `id in (${issueIdChunk.join(",")})`,
           fields: ["key"],
-          maxResults: issueIds.length
+            maxResults: issueIdChunk.length
         })
       }
     );
@@ -196,8 +216,12 @@ export async function fetchWorklogs(
         commentText = wl.comment;
       }
       
+      const issueKey = issueKeyMap[wl.issueId] || `Issue-${wl.issueId}`;
+      const team = issueKey.split('-')[0] || 'Unknown';
+      
       return {
-        issueKey: issueKeyMap[wl.issueId] || `Issue-${wl.issueId}`,
+        issueKey,
+        team,
         timeSpent: wl.timeSpent,
         timeSpentSeconds: wl.timeSpentSeconds,
         comment: commentText,
@@ -272,4 +296,22 @@ export function extractUsersFromWorklogs(worklogs: Worklog[]): JiraUser[] {
   users.sort((a, b) => a.displayName.localeCompare(b.displayName));
   
   return users;
+}
+
+/**
+ * Extract unique teams from worklogs based on issue key prefix
+ */
+export function extractTeamsFromWorklogs(worklogs: Worklog[]): string[] {
+  const teamSet = new Set<string>();
+  
+  worklogs.forEach((wl) => {
+    if (wl.team && wl.team !== 'Unknown') {
+      teamSet.add(wl.team);
+    }
+  });
+  
+  const teams = Array.from(teamSet);
+  teams.sort((a, b) => a.localeCompare(b));
+  
+  return teams;
 }
