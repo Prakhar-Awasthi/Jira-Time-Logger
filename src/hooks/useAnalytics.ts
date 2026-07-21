@@ -1,6 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useJira } from "../context/JiraContext";
 import { fetchWorklogs, Worklog } from "../utils/jira";
+import { getTopIssues, computeFocusScore, computeStreak, computeConsistency, computeDayOfWeekPattern, computeForecast, computeOvertimeHeatmap, computeTimeDistribution, computeProjectMomentum, computeFragmentationIndex, computeUnloggedGaps, TopIssue } from "../utils/insights";
+import { useSettings } from "./useSettings";
 
 export interface DailyTotal {
   date: string;
@@ -93,10 +95,12 @@ function computeTeamBreakdown(worklogs: Worklog[]): TeamBreakdown[] {
 
 export function useAnalytics(weeksBack = 4) {
   const { jiraUrl, email, token, credentialsReady } = useJira();
+  const { settings } = useSettings();
   const [weeks, setWeeks] = useState<WeekSummary[]>([]);
   const [teamBreakdown, setTeamBreakdown] = useState<TeamBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
   const [currentWeekWorklogs, setCurrentWeekWorklogs] = useState<Worklog[]>([]);
+  const [previousWeekWorklogs, setPreviousWeekWorklogs] = useState<Worklog[]>([]);
 
   useEffect(() => {
     if (!credentialsReady) return;
@@ -129,6 +133,16 @@ export function useAnalytics(weeksBack = 4) {
         });
         setCurrentWeekWorklogs(currentWorklogs);
         setTeamBreakdown(computeTeamBreakdown(currentWorklogs));
+
+        const prevMonday = new Date(currentMonday);
+        prevMonday.setDate(prevMonday.getDate() - 7);
+        const prevSunday = new Date(prevMonday);
+        prevSunday.setDate(prevSunday.getDate() + 6);
+        const prevWorklogs = worklogs.filter((wl) => {
+          const d = new Date(wl.started);
+          return d >= prevMonday && d <= prevSunday;
+        });
+        setPreviousWeekWorklogs(prevWorklogs);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -136,5 +150,40 @@ export function useAnalytics(weeksBack = 4) {
     return () => controller.abort();
   }, [jiraUrl, email, token, credentialsReady, weeksBack]);
 
-  return { weeks, teamBreakdown, loading, currentWeekWorklogs };
+  const topIssues = useMemo(() => getTopIssues(currentWeekWorklogs, 8), [currentWeekWorklogs]);
+  const focusScore = useMemo(() => computeFocusScore(currentWeekWorklogs), [currentWeekWorklogs]);
+  const streak = useMemo(() => computeStreak(currentWeekWorklogs), [currentWeekWorklogs]);
+  const consistency = useMemo(() => computeConsistency(currentWeekWorklogs), [currentWeekWorklogs]);
+  const dayPattern = useMemo(() => computeDayOfWeekPattern(currentWeekWorklogs), [currentWeekWorklogs]);
+  const forecast = useMemo(() => computeForecast(currentWeekWorklogs, settings.weeklyTargetHours), [currentWeekWorklogs, settings.weeklyTargetHours]);
+  const overtimeHeatmap = useMemo(() => computeOvertimeHeatmap(currentWeekWorklogs, settings.dailyTargetHours), [currentWeekWorklogs, settings.dailyTargetHours]);
+  const timeDistribution = useMemo(() => computeTimeDistribution(currentWeekWorklogs), [currentWeekWorklogs]);
+  const projectMomentum = useMemo(() => computeProjectMomentum(currentWeekWorklogs, previousWeekWorklogs), [currentWeekWorklogs, previousWeekWorklogs]);
+  const fragmentation = useMemo(() => computeFragmentationIndex(currentWeekWorklogs), [currentWeekWorklogs]);
+  const unloggedGaps = useMemo(() => {
+    const currentWeek = weeks[weeks.length - 1];
+    if (!currentWeek) return [];
+    const startStr = currentWeek.startDate.toISOString().split("T")[0];
+    const endStr = currentWeek.endDate.toISOString().split("T")[0];
+    return computeUnloggedGaps(currentWeekWorklogs, startStr, endStr, settings.dailyTargetHours);
+  }, [currentWeekWorklogs, weeks, settings.dailyTargetHours]);
+
+  return {
+    weeks,
+    teamBreakdown,
+    loading,
+    currentWeekWorklogs,
+    previousWeekWorklogs,
+    topIssues,
+    focusScore,
+    streak,
+    consistency,
+    dayPattern,
+    forecast,
+    overtimeHeatmap,
+    timeDistribution,
+    projectMomentum,
+    fragmentation,
+    unloggedGaps,
+  };
 }

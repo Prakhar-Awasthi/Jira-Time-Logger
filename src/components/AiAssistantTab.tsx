@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useJira } from "../context/JiraContext";
+import { useSettings } from "../hooks/useSettings";
 import { ChatMessage, processMessage, AiServiceContext } from "../services/ai-service";
 import { ChatMessageBubble } from "./ChatMessage";
 import { ParsedEntryCard } from "./ParsedEntryCard";
@@ -9,6 +10,7 @@ import { getTodayString, getWeekEndingSaturdayString } from "../utils/helpers";
 
 export function AiAssistantTab() {
   const { jiraUrl, email, token, credentialsReady } = useJira();
+  const { settings, addRule } = useSettings();
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -20,6 +22,7 @@ export function AiAssistantTab() {
   const [input, setInput] = useState("");
   const [logging, setLogging] = useState(false);
   const [worklogs, setWorklogs] = useState<Worklog[]>([]);
+  const [previousWeekWorklogs, setPreviousWeekWorklogs] = useState<Worklog[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,7 +33,6 @@ export function AiAssistantTab() {
     if (!credentialsReady) return;
     const loadContext = async () => {
       try {
-        const today = getTodayString();
         const weekEnd = getWeekEndingSaturdayString();
         const anchor = new Date(`${weekEnd}T00:00:00`);
         const start = new Date(anchor);
@@ -38,8 +40,18 @@ export function AiAssistantTab() {
         start.setDate(start.getDate() - ((day + 6) % 7));
         const end = new Date(start);
         end.setDate(start.getDate() + 6);
-        const logs = await fetchWorklogs(jiraUrl, email, token, start, end);
+
+        const prevStart = new Date(start);
+        prevStart.setDate(prevStart.getDate() - 7);
+        const prevEnd = new Date(prevStart);
+        prevEnd.setDate(prevEnd.getDate() + 6);
+
+        const [logs, prevLogs] = await Promise.all([
+          fetchWorklogs(jiraUrl, email, token, start, end),
+          fetchWorklogs(jiraUrl, email, token, prevStart, prevEnd),
+        ]);
         setWorklogs(logs);
+        setPreviousWeekWorklogs(prevLogs);
       } catch {}
     };
     loadContext();
@@ -54,7 +66,21 @@ export function AiAssistantTab() {
     const end = new Date(start);
     end.setDate(start.getDate() + 6);
     const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return { recentIssues: issueKeys, worklogs, startDate: fmt(start), endDate: fmt(end) };
+    return {
+      recentIssues: issueKeys,
+      worklogs,
+      previousWeekWorklogs,
+      startDate: fmt(start),
+      endDate: fmt(end),
+      weeklyTargetHours: settings.weeklyTargetHours,
+      dailyTargetHours: settings.dailyTargetHours,
+    };
+  };
+
+  const handleAction = (response: ChatMessage) => {
+    if (response.action?.type === "add_rule") {
+      addRule(response.action.rule);
+    }
   };
 
   const handleSend = () => {
@@ -66,12 +92,14 @@ export function AiAssistantTab() {
 
     setMessages(prev => [...prev, userMsg, response]);
     setInput("");
+    if (response.action) handleAction(response);
   };
 
   const handleQuickAction = (action: string) => {
     const userMsg: ChatMessage = { id: Date.now().toString(36), role: "user", content: action, type: "text" };
     const response = processMessage(action, getContext());
     setMessages(prev => [...prev, userMsg, response]);
+    if (response.action) handleAction(response);
   };
 
   const handleLogEntry = async (entry: NlpEntry) => {
@@ -150,14 +178,35 @@ export function AiAssistantTab() {
           <button className="quick-action-btn" onClick={() => handleQuickAction("Summarize this week")}>
             Summarize week
           </button>
+          <button className="quick-action-btn" onClick={() => handleQuickAction("Compare to last week")}>
+            Compare weeks
+          </button>
+          <button className="quick-action-btn" onClick={() => handleQuickAction("Top issues")}>
+            Top issues
+          </button>
+          <button className="quick-action-btn" onClick={() => handleQuickAction("Focus score")}>
+            Focus score
+          </button>
+          <button className="quick-action-btn" onClick={() => handleQuickAction("Am I on track?")}>
+            Forecast
+          </button>
+          <button className="quick-action-btn" onClick={() => handleQuickAction("How's my streak?")}>
+            Streak
+          </button>
           <button className="quick-action-btn" onClick={() => handleQuickAction("Check for anomalies")}>
-            Check anomalies
+            Anomalies
           </button>
           <button className="quick-action-btn" onClick={() => handleQuickAction("What am I missing?")}>
             Missing days
           </button>
-          <button className="quick-action-btn" onClick={() => handleQuickAction("Help")}>
-            Help
+          <button className="quick-action-btn" onClick={() => handleQuickAction("Plan my day")}>
+            Plan day
+          </button>
+          <button className="quick-action-btn" onClick={() => handleQuickAction("Export standup")}>
+            Export standup
+          </button>
+          <button className="quick-action-btn" onClick={() => handleQuickAction("What's trending?")}>
+            Trending
           </button>
         </div>
 

@@ -1136,6 +1136,188 @@ button:disabled {
   font-weight: 600;
 }
 
+/* KPI cards */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.kpi-card {
+  background: var(--surface);
+  padding: 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.kpi-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.kpi-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+.kpi-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Score cards */
+.scores-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.score-card {
+  background: var(--surface);
+  padding: 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.score-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.score-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.score-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.score-badge.good {
+  background: #e3fcef;
+  color: #006644;
+}
+
+.score-badge.ok {
+  background: #fffae6;
+  color: #974f0c;
+}
+
+.score-badge.low {
+  background: #ffebe6;
+  color: #bf2600;
+}
+
+.score-detail {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.score-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.score-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* Day pattern */
+.day-pattern {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-end;
+  height: 120px;
+  padding-top: 12px;
+}
+
+.day-pattern-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.day-pattern-bar-container {
+  width: 32px;
+  height: 80px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.day-pattern-bar {
+  width: 24px;
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  transition: height 0.3s ease;
+}
+
+.day-pattern-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.day-pattern-value {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Issue tag in tables */
+.issue-tag {
+  font-family: SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Extended scores row (4 columns) */
+.scores-row--extended {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* Heatmap legend */
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.heatmap-legend-gradient {
+  width: 80px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #10b981, #94a3b8, #ef4444);
+}
+
 /* Settings — Atlassian modal */
 .settings-overlay {
   position: fixed;
@@ -1369,6 +1551,22 @@ button:disabled {
   background: var(--accent-hover);
 }
 
+/* Dark mode overrides for score badges */
+body[data-theme="dark"] .score-badge.good {
+  background: rgba(75, 206, 151, 0.15);
+  color: #4bce97;
+}
+
+body[data-theme="dark"] .score-badge.ok {
+  background: rgba(245, 205, 71, 0.15);
+  color: #f5cd47;
+}
+
+body[data-theme="dark"] .score-badge.low {
+  background: rgba(248, 113, 104, 0.15);
+  color: #f87168;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .log-section {
@@ -1376,6 +1574,15 @@ button:disabled {
   }
   .analytics-row {
     flex-direction: column;
+  }
+  .kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .scores-row {
+    grid-template-columns: 1fr;
+  }
+  .scores-row--extended {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
@@ -1392,5 +1599,8 @@ button:disabled {
   .settings-panel {
     width: 95%;
     max-height: 90vh;
+  }
+  .kpi-row {
+    grid-template-columns: 1fr 1fr;
   }
 }
