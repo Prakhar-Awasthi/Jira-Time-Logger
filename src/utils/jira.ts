@@ -24,6 +24,62 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+// --- In-memory worklog response cache (60s TTL) ---
+
+interface CacheEntry {
+  data: Worklog[];
+  timestamp: number;
+}
+
+const CACHE_TTL_MS = 60_000;
+const worklogCache = new Map<string, CacheEntry>();
+
+function getCacheKey(startDate: Date, endDate: Date): string {
+  return `${startDate.getTime()}-${endDate.getTime()}`;
+}
+
+function getCachedWorklogs(startDate: Date, endDate: Date): Worklog[] | null {
+  const key = getCacheKey(startDate, endDate);
+  const entry = worklogCache.get(key);
+  if (entry && Date.now() - entry.timestamp < CACHE_TTL_MS) {
+    return entry.data;
+  }
+  worklogCache.delete(key);
+  return null;
+}
+
+function setCachedWorklogs(startDate: Date, endDate: Date, data: Worklog[]): void {
+  const key = getCacheKey(startDate, endDate);
+  worklogCache.set(key, { data, timestamp: Date.now() });
+}
+
+export function invalidateWorklogCache(): void {
+  worklogCache.clear();
+}
+
+// --- Persistent issue key cache (chrome.storage.local) ---
+
+const ISSUE_KEY_STORAGE_KEY = "issueKeyCache";
+
+async function getPersistedIssueKeys(): Promise<{ [id: string]: string }> {
+  return new Promise((resolve) => {
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.get([ISSUE_KEY_STORAGE_KEY], (data) => {
+        resolve(data[ISSUE_KEY_STORAGE_KEY] || {});
+      });
+    } else {
+      resolve({});
+    }
+  });
+}
+
+async function persistIssueKeys(map: { [id: string]: string }): Promise<void> {
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    const existing = await getPersistedIssueKeys();
+    chrome.storage.local.set({ [ISSUE_KEY_STORAGE_KEY]: { ...existing, ...map } });
+  }
+}
+
 export async function logWork(
   baseUrl: string,
   email: string,
@@ -74,6 +130,8 @@ export async function logWork(
     const errorText = await res.text();
     throw new Error(`${issueKey} failed: ${errorText}`);
   }
+
+  invalidateWorklogCache();
 }
 
 export function formatJiraStarted(dateString: string): string {
@@ -90,8 +148,17 @@ export async function fetchWorklogs(
   token: string,
   startDate: Date,
   endDate: Date,
-  filterEmail?: string
+  filterEmail?: string,
+  signal?: AbortSignal
 ): Promise<Worklog[]> {
+  const cached = getCachedWorklogs(startDate, endDate);
+  if (cached) {
+    if (filterEmail) {
+      return cached.filter(wl => wl.authorEmail === filterEmail);
+    }
+    return cached;
+  }
+
   const auth = btoa(`${email}:${token}`);
 
   // Jira paginates /worklog/updated responses. Without paging, larger date ranges
@@ -101,6 +168,7 @@ export async function fetchWorklogs(
 
   while (nextPageUrl) {
     const worklogUpdateRes = await fetch(nextPageUrl, {
+      signal,
       headers: {
         "Authorization": `Basic ${auth}`,
         "Accept": "application/json"
@@ -131,6 +199,7 @@ export async function fetchWorklogs(
     const worklogListRes = await fetch(
       `${baseUrl}/rest/api/3/worklog/list`,
       {
+        signal,
         method: "POST",
         headers: {
           "Authorization": `Basic ${auth}`,
@@ -154,54 +223,70 @@ export async function fetchWorklogs(
   
   // Get unique issue IDs to fetch issue keys
   const issueIds = [...new Set(allWorklogs.map((wl: any) => wl.issueId).filter(Boolean))];
-  
-  // Fetch issue keys for the issue IDs in batches.
+
+  // Use persistent cache to skip already-known IDs
+  const persistedKeys = await getPersistedIssueKeys();
   const issueKeyMap: { [id: string]: string } = {};
-  for (const issueIdChunk of chunkArray(issueIds, 200)) {
-    const issueRes = await fetch(
-      `${baseUrl}/rest/api/3/search/jql`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Basic ${auth}`,
-          "Content-Type": "application/json",
-          "Accept": "application/json"
-        },
-        body: JSON.stringify({
-            jql: `id in (${issueIdChunk.join(",")})`,
-          fields: ["key"],
-            maxResults: issueIdChunk.length
-        })
-      }
-    );
-    
-    if (issueRes.ok) {
-      const issueData = await issueRes.json();
-      (issueData.issues || []).forEach((issue: any) => {
-        issueKeyMap[issue.id] = issue.key;
-      });
+  const unknownIds: string[] = [];
+
+  for (const id of issueIds) {
+    if (persistedKeys[id]) {
+      issueKeyMap[id] = persistedKeys[id];
+    } else {
+      unknownIds.push(id);
     }
+  }
+
+  // Fetch unknown issue keys in batches (parallel).
+  if (unknownIds.length > 0) {
+    const issueChunkResults = await Promise.all(
+      chunkArray(unknownIds, 200).map(async (issueIdChunk) => {
+        const issueRes = await fetch(
+          `${baseUrl}/rest/api/3/search/jql`,
+          {
+            signal,
+            method: "POST",
+            headers: {
+              "Authorization": `Basic ${auth}`,
+              "Content-Type": "application/json",
+              "Accept": "application/json"
+            },
+            body: JSON.stringify({
+              jql: `id in (${issueIdChunk.join(",")})`,
+              fields: ["key"],
+              maxResults: issueIdChunk.length
+            })
+          }
+        );
+        if (issueRes.ok) {
+          return (await issueRes.json()).issues || [];
+        }
+        return [];
+      })
+    );
+    const newMappings: { [id: string]: string } = {};
+    issueChunkResults.flat().forEach((issue: any) => {
+      issueKeyMap[issue.id] = issue.key;
+      newMappings[issue.id] = issue.key;
+    });
+    persistIssueKeys(newMappings);
   }
   
   // Filter for date range and optionally by user
-  const filteredWorklogs = allWorklogs
+  const allFilteredWorklogs = allWorklogs
     .filter((wl: any) => {
       if (!wl.started || !wl.author || !wl.issueId) return false;
-      
+
       const wlDate = new Date(wl.started);
       const wlDateOnly = new Date(wlDate.getFullYear(), wlDate.getMonth(), wlDate.getDate());
       const startOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
       const endOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
-      
-      const dateMatch = wlDateOnly >= startOnly && wlDateOnly <= endOnly;
-      const userMatch = !filterEmail || wl.author.emailAddress === filterEmail;
-      
-      return dateMatch && userMatch;
+
+      return wlDateOnly >= startOnly && wlDateOnly <= endOnly;
     })
     .map((wl: any) => {
       let commentText = "";
       if (wl.comment && typeof wl.comment === "object") {
-        // Extract text from ADF format
         const extractText = (node: any): string => {
           if (node.type === "text") {
             return node.text || "";
@@ -215,10 +300,10 @@ export async function fetchWorklogs(
       } else if (typeof wl.comment === "string") {
         commentText = wl.comment;
       }
-      
+
       const issueKey = issueKeyMap[wl.issueId] || `Issue-${wl.issueId}`;
       const team = issueKey.split('-')[0] || 'Unknown';
-      
+
       return {
         issueKey,
         team,
@@ -230,8 +315,13 @@ export async function fetchWorklogs(
         authorEmail: wl.author.emailAddress
       };
     });
-  
-  return filteredWorklogs;
+
+  setCachedWorklogs(startDate, endDate, allFilteredWorklogs);
+
+  if (filterEmail) {
+    return allFilteredWorklogs.filter(wl => wl.authorEmail === filterEmail);
+  }
+  return allFilteredWorklogs;
 }
 
 export function formatDate(date: Date): string {
