@@ -5,9 +5,10 @@ import { FilterControls } from "./FilterControls";
 import { WorklogCard } from "./WorklogCard";
 import { getWeekEndingSaturdayString, formatSeconds } from "../utils/helpers";
 import { Worklog, getDayOfWeekFromISOString } from "../utils/jira";
+import { exportWorklogsToCSV } from "../utils/csv";
 
 export function WeeklyTab() {
-  const { selectedUser, selectedTeam, credentialsReady } = useJira();
+  const { email, selectedUser, selectedTeam, credentialsReady } = useJira();
   const [weekDate, setWeekDate] = useState(getWeekEndingSaturdayString());
 
   const { startDate, endDate } = useMemo(() => {
@@ -59,9 +60,18 @@ export function WeeklyTab() {
     <div className="view-section">
       <div className="view-header">
         <h2>Time Logs by Week</h2>
-        <button className="btn-secondary" onClick={refresh} disabled={loading}>
-          {loading ? "Loading..." : "Refresh"}
-        </button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            className="btn-secondary"
+            onClick={() => exportWorklogsToCSV(filteredWorklogs, `weekly-logs-${weekDate || "export"}.csv`)}
+            disabled={filteredWorklogs.length === 0}
+          >
+            Export CSV
+          </button>
+          <button className="btn-secondary" onClick={refresh} disabled={loading}>
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       <div className="week-controls">
@@ -102,7 +112,9 @@ export function WeeklyTab() {
               ) : day.worklogs.length === 0 ? (
                 <div className="no-logs">No time logged</div>
               ) : (
-                day.worklogs.map((wl, idx) => <WorklogCard key={idx} worklog={wl} />)
+                day.worklogs.map((wl, idx) => (
+                  <WorklogCard key={idx} worklog={wl} currentUserEmail={email} onUpdated={refresh} />
+                ))
               )}
             </div>
           </div>

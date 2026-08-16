@@ -28,7 +28,13 @@ export function useWorklogs({ startDate, endDate, active }: UseWorklogsOptions):
       const end = new Date(`${endDate}T23:59:59`);
       if (end < start) return;
 
-      const logs = await fetchWorklogs(jiraUrl, email, token, start, end, undefined, signal);
+      const logs = await fetchWorklogs(jiraUrl, email, token, start, end, undefined, signal, (staleData) => {
+        if (signal?.aborted) return;
+        setWorklogs(staleData);
+        setAllUsers(extractUsersFromWorklogs(staleData));
+        setAllTeams(extractTeamsFromWorklogs(staleData));
+        setLoading(false);
+      });
       if (signal?.aborted) return;
       setWorklogs(logs);
       setAllUsers(extractUsersFromWorklogs(logs));

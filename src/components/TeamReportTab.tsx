@@ -6,6 +6,18 @@ import { getTodayString, formatSeconds } from "../utils/helpers";
 import { JiraUser } from "../utils/jira";
 import { exportTeamReportToCSV } from "../utils/csv";
 
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function colorIndexFor(key: string): number {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return (hash % 5) + 1;
+}
+
 export function TeamReportTab() {
   const { selectedTeam, credentialsReady } = useJira();
   const [reportStartDate, setReportStartDate] = useState(getTodayString());
@@ -86,11 +98,16 @@ export function TeamReportTab() {
                 </td>
               </tr>
             ) : (
-              teamReport.map((userData) => (
+              teamReport.map((userData, i) => (
                 <tr key={userData.user.emailAddress}>
                   <td>
-                    <div className="user-name">{userData.user.displayName}</div>
-                    <div className="user-email">{userData.user.emailAddress}</div>
+                    <div className="user-cell">
+                      <div className={`avatar dot-color-${(i % 5) + 1}`}>{getInitials(userData.user.displayName)}</div>
+                      <div>
+                        <div className="user-name">{userData.user.displayName}</div>
+                        <div className="user-email">{userData.user.emailAddress}</div>
+                      </div>
+                    </div>
                   </td>
                   <td className="time-value">
                     {formatSeconds(userData.total)}
@@ -100,7 +117,7 @@ export function TeamReportTab() {
                       {Array.from(new Set(userData.worklogs.map(wl => wl.issueKey)))
                         .sort()
                         .map(issueKey => (
-                          <span key={issueKey} className="issue-tag">{issueKey}</span>
+                          <span key={issueKey} className={`issue-pill pill-color-${colorIndexFor(issueKey)}`}>{issueKey}</span>
                         ))}
                     </div>
                   </td>

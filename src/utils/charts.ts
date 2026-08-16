@@ -10,7 +10,7 @@ export interface PieSlice {
   color: string;
 }
 
-const COLORS = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16"];
+const COLORS = ["var(--teal)", "var(--warning)", "var(--purple)", "var(--success)", "var(--pink)", "var(--orange)", "#6366f1", "#84cc16"];
 
 export function getColor(index: number): string {
   return COLORS[index % COLORS.length];
@@ -49,10 +49,39 @@ export function renderBarChart(data: BarData[], options: { width: number; height
   // Target line
   if (targetLine) {
     const ty = padding.top + chartHeight - (targetLine / maxValue) * chartHeight;
-    svg += `<line x1="${padding.left}" y1="${ty}" x2="${width - padding.right}" y2="${ty}" stroke="#ef4444" stroke-width="2" stroke-dasharray="6,3"/>`;
-    svg += `<text x="${width - padding.right + 4}" y="${ty + 4}" font-size="10" fill="#ef4444">${targetLine}h</text>`;
+    svg += `<line x1="${padding.left}" y1="${ty}" x2="${width - padding.right}" y2="${ty}" stroke="var(--error)" stroke-width="2" stroke-dasharray="6,3"/>`;
+    svg += `<text x="${width - padding.right + 4}" y="${ty + 4}" font-size="10" fill="var(--error)">${targetLine}h</text>`;
   }
 
+  svg += `</svg>`;
+  return svg;
+}
+
+export function renderSparkline(values: number[], options: { color?: string } = {}): string {
+  const { color = "var(--accent)" } = options;
+  const width = 200;
+  const height = 44;
+  const padding = 4;
+  if (values.length === 0) return "";
+
+  const max = Math.max(...values, 0.0001);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const stepX = values.length > 1 ? (width - padding * 2) / (values.length - 1) : 0;
+
+  const points = values.map((v, i) => ({
+    x: padding + i * stepX,
+    y: height - padding - ((v - min) / range) * (height - padding * 2),
+  }));
+
+  const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${height} L ${points[0].x.toFixed(1)} ${height} Z`;
+  const gradId = `spark-grad-${Math.abs(values.reduce((a, b, i) => a + b * (i + 1), 0)).toFixed(0)}`;
+
+  let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.35"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>`;
+  svg += `<path d="${areaD}" fill="url(#${gradId})" stroke="none"/>`;
+  svg += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
   svg += `</svg>`;
   return svg;
 }
@@ -116,16 +145,16 @@ export function renderTrendLine(data: { label: string; value: number }[], option
 
   if (points.length > 1) {
     const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-    svg += `<path d="${pathD}" fill="none" stroke="#3b82f6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
+    svg += `<path d="${pathD}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
 
     // Area fill
     const areaD = `${pathD} L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
     svg += `<path d="${areaD}" fill="url(#gradient)" opacity="0.2"/>`;
-    svg += `<defs><linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/></linearGradient></defs>`;
+    svg += `<defs><linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="var(--accent)"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>`;
   }
 
   points.forEach((p) => {
-    svg += `<circle cx="${p.x}" cy="${p.y}" r="5" fill="#3b82f6" stroke="#ffffff" stroke-width="2"/>`;
+    svg += `<circle cx="${p.x}" cy="${p.y}" r="5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>`;
     svg += `<text x="${p.x}" y="${height - padding.bottom + 20}" text-anchor="middle" font-size="10" fill="var(--text)">${p.label}</text>`;
     svg += `<text x="${p.x}" y="${p.y - 12}" text-anchor="middle" font-size="10" fill="var(--muted)">${p.value.toFixed(1)}h</text>`;
   });
@@ -148,18 +177,22 @@ export function renderHeatmapRow(days: OvertimeDay[], options: { width: number }
 
   days.forEach((day, i) => {
     const x = i * (cellSize + 4);
-    let color: string;
+    let fill: string;
+    let opacity: number;
     if (day.intensity > 0) {
       const alpha = Math.min(1, day.intensity);
-      color = `rgba(239, 68, 68, ${0.2 + alpha * 0.6})`;
+      fill = "var(--error)";
+      opacity = 0.2 + alpha * 0.6;
     } else if (day.intensity < 0) {
       const alpha = Math.min(1, Math.abs(day.intensity));
-      color = `rgba(16, 185, 129, ${0.2 + alpha * 0.4})`;
+      fill = "var(--success)";
+      opacity = 0.2 + alpha * 0.4;
     } else {
-      color = "rgba(148, 163, 184, 0.2)";
+      fill = "var(--muted)";
+      opacity = 0.2;
     }
 
-    svg += `<rect x="${x}" y="0" width="${cellSize}" height="${cellSize}" rx="4" fill="${color}"/>`;
+    svg += `<rect x="${x}" y="0" width="${cellSize}" height="${cellSize}" rx="4" fill="${fill}" fill-opacity="${opacity.toFixed(2)}"/>`;
     svg += `<text x="${x + cellSize / 2}" y="${cellSize / 2 + 4}" text-anchor="middle" font-size="10" font-weight="600" fill="var(--text)">${day.hours.toFixed(1)}</text>`;
     svg += `<text x="${x + cellSize / 2}" y="${cellSize + 16}" text-anchor="middle" font-size="10" fill="var(--muted)">${day.dayLabel}</text>`;
   });
@@ -225,16 +258,61 @@ export function renderGapChart(gaps: DailyGap[], options: { width: number; heigh
     const gapY = actualY - gapHeight;
 
     if (g.gap > 0) {
-      svg += `<rect x="${x}" y="${gapY}" width="${barWidth}" height="${gapHeight}" rx="4" fill="#ef4444" opacity="0.2"/>`;
+      svg += `<rect x="${x}" y="${gapY}" width="${barWidth}" height="${gapHeight}" rx="4" fill="var(--error)" opacity="0.2"/>`;
     }
-    svg += `<rect x="${x}" y="${actualY}" width="${barWidth}" height="${actualHeight}" rx="4" fill="#3b82f6" opacity="0.85"/>`;
+    svg += `<rect x="${x}" y="${actualY}" width="${barWidth}" height="${actualHeight}" rx="4" fill="var(--accent)" opacity="0.85"/>`;
     svg += `<text x="${x + barWidth / 2}" y="${height - padding.bottom + 20}" text-anchor="middle" font-size="11" fill="var(--text)">${g.dayLabel}</text>`;
     svg += `<text x="${x + barWidth / 2}" y="${actualY - 6}" text-anchor="middle" font-size="10" fill="var(--muted)">${g.actual.toFixed(1)}</text>`;
   });
 
   const ty = padding.top + chartHeight - (targetLine / maxValue) * chartHeight;
-  svg += `<line x1="${padding.left}" y1="${ty}" x2="${width - padding.right}" y2="${ty}" stroke="#ef4444" stroke-width="2" stroke-dasharray="6,3"/>`;
-  svg += `<text x="${width - padding.right + 4}" y="${ty + 4}" font-size="10" fill="#ef4444">${targetLine}h</text>`;
+  svg += `<line x1="${padding.left}" y1="${ty}" x2="${width - padding.right}" y2="${ty}" stroke="var(--error)" stroke-width="2" stroke-dasharray="6,3"/>`;
+  svg += `<text x="${width - padding.right + 4}" y="${ty + 4}" font-size="10" fill="var(--error)">${targetLine}h</text>`;
+
+  svg += `</svg>`;
+  return svg;
+}
+
+export interface PeerBarItem {
+  name: string;
+  value: number;
+  isCurrentUser: boolean;
+  rank: number;
+}
+
+export function renderPeerBarChart(items: PeerBarItem[], options: { width: number }): string {
+  const { width } = options;
+  const rowH = 38;
+  const rankW = 28;
+  const labelW = 120;
+  const valueW = 44;
+  const padding = { top: 8, right: valueW + 14, bottom: 8, left: rankW + labelW + 8 };
+  const chartWidth = width - padding.left - padding.right;
+  const height = padding.top + padding.bottom + items.length * rowH;
+  const maxValue = Math.max(...items.map(i => i.value), 0.01);
+
+  let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">`;
+
+  items.forEach((item, i) => {
+    const y = padding.top + i * rowH;
+    const barH = rowH - 16;
+    const barY = y + 8;
+    const barW = Math.max(0, (item.value / maxValue) * chartWidth);
+    const fill = item.isCurrentUser ? "var(--accent)" : "var(--purple)";
+    const textFill = item.isCurrentUser ? "var(--accent)" : "var(--text)";
+    const weight = item.isCurrentUser ? "700" : "500";
+    const rankLabel = item.rank === 1 ? "1st" : item.rank === 2 ? "2nd" : item.rank === 3 ? "3rd" : `${item.rank}th`;
+    const displayName = item.isCurrentUser ? `${item.name} (You)` : item.name;
+    const truncName = displayName.length > 17 ? displayName.slice(0, 16) + "…" : displayName;
+
+    svg += `<text x="${rankW - 2}" y="${barY + barH / 2 + 4}" text-anchor="end" font-size="10" font-weight="600" fill="var(--muted)">${rankLabel}</text>`;
+    svg += `<text x="${rankW + 6}" y="${barY + barH / 2 + 4}" font-size="11" font-weight="${weight}" fill="${textFill}">${truncName}</text>`;
+    svg += `<rect x="${padding.left}" y="${barY}" width="${chartWidth}" height="${barH}" rx="3" fill="var(--surface-2)"/>`;
+    if (barW > 0) {
+      svg += `<rect x="${padding.left}" y="${barY}" width="${barW}" height="${barH}" rx="3" fill="${fill}" opacity="${item.isCurrentUser ? "0.88" : "0.6"}"/>`;
+    }
+    svg += `<text x="${padding.left + chartWidth + 6}" y="${barY + barH / 2 + 4}" font-size="11" font-weight="${weight}" fill="${textFill}">${item.value.toFixed(1)}h</text>`;
+  });
 
   svg += `</svg>`;
   return svg;
@@ -260,7 +338,7 @@ export function renderMomentumBars(items: ProjectMomentum[], options: { width: n
   display.forEach((item, i) => {
     const y = padding.top + i * rowHeight;
     const barW = (Math.abs(item.delta) / maxDelta) * (chartWidth / 2 - 10);
-    const color = item.direction === "up" ? "#10b981" : item.direction === "down" ? "#ef4444" : "#94a3b8";
+    const color = item.direction === "up" ? "var(--success)" : item.direction === "down" ? "var(--error)" : "var(--muted)";
 
     if (item.delta >= 0) {
       svg += `<rect x="${centerX + 2}" y="${y}" width="${barW}" height="${barHeight}" rx="3" fill="${color}" opacity="0.8"/>`;

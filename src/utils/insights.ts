@@ -358,6 +358,47 @@ export interface OvertimeDay {
   intensity: number;
 }
 
+export interface BurnoutSignal {
+  active: boolean;
+  consecutiveDays: number;
+  overHoursTotal: number;
+  message: string;
+}
+
+export function computeBurnoutSignal(heatmap: OvertimeDay[], dailyTargetHours: number): BurnoutSignal {
+  if (heatmap.length === 0) return { active: false, consecutiveDays: 0, overHoursTotal: 0, message: "" };
+
+  const workdays = [...heatmap]
+    .filter(d => { const dow = new Date(`${d.date}T00:00:00`).getDay(); return dow >= 1 && dow <= 5; })
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  let maxStreak = 0;
+  let maxStreakHours = 0;
+  let cur = 0;
+  let curHours = 0;
+
+  for (const day of workdays) {
+    if (day.hours > dailyTargetHours) {
+      cur++;
+      curHours += day.hours - dailyTargetHours;
+      if (cur > maxStreak) { maxStreak = cur; maxStreakHours = curHours; }
+    } else {
+      cur = 0;
+      curHours = 0;
+    }
+  }
+
+  const active = maxStreak >= 3;
+  return {
+    active,
+    consecutiveDays: maxStreak,
+    overHoursTotal: Math.round(maxStreakHours * 10) / 10,
+    message: active
+      ? `${maxStreak} consecutive workdays over ${dailyTargetHours}h target (+${maxStreakHours.toFixed(1)}h). Consider a lighter day to recover.`
+      : "",
+  };
+}
+
 export function computeOvertimeHeatmap(worklogs: Worklog[], dailyTargetHours: number): OvertimeDay[] {
   const dayTotals = new Map<string, number>();
   worklogs.forEach(wl => {

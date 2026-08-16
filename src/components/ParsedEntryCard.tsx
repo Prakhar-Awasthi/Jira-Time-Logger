@@ -7,13 +7,19 @@ interface ParsedEntryCardProps {
   logging: boolean;
 }
 
+function colorIndexFor(key: string): number {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return (hash % 5) + 1;
+}
+
 export function ParsedEntryCard({ entries, onLogEntry, onLogAll, logging }: ParsedEntryCardProps) {
   return (
     <div className="parsed-entries-card">
       {entries.map((entry, idx) => (
         <div key={idx} className="parsed-entry">
           <div className="parsed-entry-info">
-            <span className="parsed-entry-key">{entry.issueKey}</span>
+            <span className={`issue-pill pill-color-${colorIndexFor(entry.issueKey)}`}>{entry.issueKey}</span>
             <span className="parsed-entry-time">{entry.timeSpent}</span>
             <span className="parsed-entry-comment">{entry.comment}</span>
           </div>

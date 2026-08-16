@@ -1,10 +1,38 @@
+import { useState } from "react";
 import { useAnalytics } from "../hooks/useAnalytics";
 import { useSettings } from "../hooks/useSettings";
-import { renderBarChart, renderDonutChart, renderTrendLine, renderHeatmapRow, renderHistogram, renderGapChart, renderMomentumBars, getColor, BarData, PieSlice } from "../utils/charts";
+import { usePeerComparison } from "../hooks/usePeerComparison";
+import { renderBarChart, renderDonutChart, renderTrendLine, renderHeatmapRow, renderHistogram, renderGapChart, renderMomentumBars, renderSparkline, renderPeerBarChart, getColor, BarData, PieSlice } from "../utils/charts";
+
+function trendBadge(current: number, previous: number): { direction: "up" | "down"; text: string } | null {
+  if (previous <= 0) return current > 0 ? { direction: "up", text: "New" } : null;
+  const pct = ((current - previous) / previous) * 100;
+  if (Math.abs(pct) < 0.1) return null;
+  return { direction: pct >= 0 ? "up" : "down", text: `${pct >= 0 ? "↑" : "↓"} ${Math.abs(pct).toFixed(1)}%` };
+}
+
+function rankSuffix(rank: number): string {
+  if (rank === 1) return "1st";
+  if (rank === 2) return "2nd";
+  if (rank === 3) return "3rd";
+  return `${rank}th`;
+}
+
+function getAvatarColor(email: string): string {
+  const colors = ["#14b8a6", "#7c6cf0", "#ec4899", "#f97316", "#0ea5e9", "#16a34a", "#d97706", "#6366f1"];
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) hash = email.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
 
 export function AnalyticsTab() {
-  const { weeks, teamBreakdown, loading, topIssues, focusScore, streak, consistency, dayPattern, forecast, overtimeHeatmap, timeDistribution, projectMomentum, fragmentation, unloggedGaps } = useAnalytics(4);
+  const [timeRange, setTimeRange] = useState<"4w" | "3m" | "6m">("4w");
+  const weeksBack = timeRange === "4w" ? 4 : timeRange === "3m" ? 13 : 26;
+  const { weeks, teamBreakdown, loading, previousWeekWorklogs, topIssues, focusScore, streak, consistency, dayPattern, forecast, overtimeHeatmap, timeDistribution, projectMomentum, fragmentation, unloggedGaps, burnoutSignal, issueEstimates } = useAnalytics(weeksBack);
   const { settings } = useSettings();
+  const [peerTeam, setPeerTeam] = useState("");
+  const currentWeekForPeers = weeks.length > 0 ? weeks[weeks.length - 1] : null;
+  const { peers, teamOptions, defaultTeam } = usePeerComparison(currentWeekForPeers, peerTeam);
 
   if (loading) {
     return <div className="analytics-loading">Loading analytics...</div>;
@@ -15,10 +43,46 @@ export function AnalyticsTab() {
   }
 
   const currentWeek = weeks[weeks.length - 1];
+  const previousWeek = weeks.length > 1 ? weeks[weeks.length - 2] : null;
+  const priorMonthWeek = weeks.length >= 5 ? weeks[weeks.length - 5] : null;
   const totalHours = currentWeek.totalHours;
   const workingDays = currentWeek.dailyTotals.filter(d => d.hours > 0).length || 1;
   const avgPerDay = totalHours / workingDays;
   const issueCount = topIssues.length;
+  const prevIssueCount = new Set(previousWeekWorklogs.map(wl => wl.issueKey)).size;
+
+  const weeklyAvgPerDay = weeks.map(w => w.totalHours / (w.dailyTotals.filter(d => d.hours > 0).length || 1));
+
+  const kpiCards = [
+    {
+      heading: "This Week",
+      value: `${totalHours.toFixed(1)}h`,
+      sub: `${settings.weeklyTargetHours}h target`,
+      badge: previousWeek ? trendBadge(totalHours, previousWeek.totalHours) : null,
+      spark: renderSparkline(weeks.map(w => w.totalHours), { color: "var(--accent)" }),
+    },
+    {
+      heading: "Avg / Day",
+      value: `${avgPerDay.toFixed(1)}h`,
+      sub: `${workingDays} days logged`,
+      badge: previousWeek ? trendBadge(avgPerDay, weeklyAvgPerDay[weeklyAvgPerDay.length - 2] || 0) : null,
+      spark: renderSparkline(weeklyAvgPerDay, { color: "var(--teal)" }),
+    },
+    {
+      heading: "Issues",
+      value: `${issueCount}`,
+      sub: "worked on",
+      badge: trendBadge(issueCount, prevIssueCount),
+      spark: null,
+    },
+    {
+      heading: "Streak",
+      value: `${streak.current}d`,
+      sub: `longest: ${streak.longest}d`,
+      badge: null,
+      spark: null,
+    },
+  ];
 
   const barData: BarData[] = currentWeek.dailyTotals.map((d, i) => ({
     label: d.label,
@@ -43,28 +107,52 @@ export function AnalyticsTab() {
 
   return (
     <div className="analytics-tab">
+      {/* Time range picker */}
+      <div className="timerange-picker">
+        {(["4w", "3m", "6m"] as const).map(r => (
+          <button key={r} className={`timerange-btn${timeRange === r ? " active" : ""}`} onClick={() => setTimeRange(r)}>
+            {r === "4w" ? "4 Weeks" : r === "3m" ? "3 Months" : "6 Months"}
+          </button>
+        ))}
+      </div>
+
+      {/* Burnout signal */}
+      {burnoutSignal.active && (
+        <div className="burnout-callout">
+          <span className="burnout-icon">⚠</span>
+          <span>{burnoutSignal.message}</span>
+        </div>
+      )}
+
       {/* KPI Summary Cards */}
       <div className="kpi-row">
-        <div className="kpi-card">
-          <div className="kpi-value">{totalHours.toFixed(1)}h</div>
-          <div className="kpi-label">This Week</div>
-          <div className="kpi-sub">{settings.weeklyTargetHours}h target</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-value">{avgPerDay.toFixed(1)}h</div>
-          <div className="kpi-label">Avg / Day</div>
-          <div className="kpi-sub">{workingDays} days logged</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-value">{issueCount}</div>
-          <div className="kpi-label">Issues</div>
-          <div className="kpi-sub">worked on</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-value">{streak.current}d</div>
-          <div className="kpi-label">Streak</div>
-          <div className="kpi-sub">longest: {streak.longest}d</div>
-        </div>
+        {kpiCards.map((card) => (
+          <div key={card.heading} className="kpi-card kpi-card--trend">
+            <div className="kpi-card-top">
+              <span className="kpi-card-heading">{card.heading}</span>
+              {card.badge && (
+                <span className={`kpi-card-badge ${card.badge.direction === "down" ? "down" : ""}`}>{card.badge.text}</span>
+              )}
+            </div>
+            <div className="kpi-value">{card.value}</div>
+            <div className="kpi-sub">{card.sub}</div>
+            {card.spark && (
+              <div className="kpi-card-spark" dangerouslySetInnerHTML={{ __html: card.spark }} />
+            )}
+          </div>
+        ))}
+        {priorMonthWeek && (
+          <div className="kpi-card kpi-card--trend">
+            <div className="kpi-card-top"><span className="kpi-card-heading">4 Weeks Ago</span></div>
+            <div className="kpi-value">{priorMonthWeek.totalHours.toFixed(1)}h</div>
+            <div className="kpi-sub">
+              {(() => {
+                const diff = totalHours - priorMonthWeek.totalHours;
+                return `${diff >= 0 ? "+" : ""}${diff.toFixed(1)}h vs now`;
+              })()}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Scores row */}
@@ -126,13 +214,21 @@ export function AnalyticsTab() {
         <section className="analytics-section analytics-section--half">
           <h3>Time by Project</h3>
           <div className="chart-container chart-container--centered" dangerouslySetInnerHTML={{ __html: donutSvg }} />
-          <ul className="legend">
-            {pieSlices.map((s, i) => (
-              <li key={i}>
-                <span className="legend-dot" style={{ backgroundColor: s.color }} />
-                {s.label}: {s.value.toFixed(1)}h
-              </li>
-            ))}
+          <ul className="leaderboard">
+            {pieSlices.map((s, i) => {
+              const pieTotal = pieSlices.reduce((sum, x) => sum + x.value, 0) || 1;
+              const pct = (s.value / pieTotal) * 100;
+              return (
+                <li key={i} className="leaderboard-item">
+                  <span className="leaderboard-dot" style={{ backgroundColor: s.color }} />
+                  <span className="leaderboard-name">{s.label}</span>
+                  <span className="leaderboard-track">
+                    <span className="leaderboard-fill" style={{ width: `${pct}%`, backgroundColor: s.color }} />
+                  </span>
+                  <span className="leaderboard-value">{s.value.toFixed(1)}h</span>
+                </li>
+              );
+            })}
           </ul>
         </section>
 
@@ -152,20 +248,27 @@ export function AnalyticsTab() {
             <thead>
               <tr>
                 <th>Issue</th>
-                <th>Hours</th>
+                <th>My Hours</th>
+                <th>Estimate</th>
                 <th>Share</th>
                 <th>Entries</th>
               </tr>
             </thead>
             <tbody>
-              {topIssues.map((issue) => (
-                <tr key={issue.issueKey}>
-                  <td><span className="issue-tag">{issue.issueKey}</span></td>
-                  <td>{issue.hours.toFixed(1)}h</td>
-                  <td>{issue.percentage}%</td>
-                  <td>{issue.entries}</td>
-                </tr>
-              ))}
+              {topIssues.map((issue) => {
+                const est = issueEstimates.find(e => e.issueKey === issue.issueKey);
+                const estHours = est?.originalEstimateSeconds != null ? est.originalEstimateSeconds / 3600 : null;
+                const isOver = estHours != null && issue.hours > estHours;
+                return (
+                  <tr key={issue.issueKey}>
+                    <td><span className="issue-tag">{issue.issueKey}</span></td>
+                    <td className={isOver ? "over-estimate" : ""}>{issue.hours.toFixed(1)}h</td>
+                    <td className="estimate-col">{estHours != null ? `${estHours.toFixed(1)}h` : "—"}</td>
+                    <td>{issue.percentage}%</td>
+                    <td>{issue.entries}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -255,6 +358,96 @@ export function AnalyticsTab() {
           <div className="chart-container chart-container--centered" dangerouslySetInnerHTML={{ __html: renderMomentumBars(projectMomentum, { width: 480, height: 200 }) }} />
         </section>
       )}
+
+      {/* Peer Comparison */}
+      {peers.length > 0 && (() => {
+        const activeTeam = peerTeam || defaultTeam;
+        const currentUserPeer = peers.find(p => p.isCurrentUser);
+        const peerBarItems = peers.map(p => ({ name: p.name, value: p.totalHours, isCurrentUser: p.isCurrentUser, rank: p.rank }));
+
+        return (
+          <section className="analytics-section">
+            <div className="peer-section-header">
+              <h3>Peer Comparison — This Week</h3>
+              {teamOptions.length > 1 && (
+                <div className="peer-team-pills">
+                  {teamOptions.map(team => (
+                    <button
+                      key={team}
+                      className={`peer-team-pill${(peerTeam || defaultTeam) === team ? " active" : ""}`}
+                      onClick={() => setPeerTeam(team)}
+                    >
+                      {team}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {activeTeam && <div className="peer-team-label">Team: <strong>{activeTeam}</strong> · {peers.length} member{peers.length !== 1 ? "s" : ""}</div>}
+
+            <div className="chart-container" dangerouslySetInnerHTML={{ __html: renderPeerBarChart(peerBarItems, { width: 480 }) }} />
+
+            <table className="analytics-table peer-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Member</th>
+                  <th>Hours</th>
+                  <th>Avg / Day</th>
+                  <th>Issues</th>
+                  <th>Focus</th>
+                  <th>Days Logged</th>
+                </tr>
+              </thead>
+              <tbody>
+                {peers.map(peer => (
+                  <tr key={peer.email} className={peer.isCurrentUser ? "peer-row--you" : ""}>
+                    <td>
+                      <span className={`peer-rank-badge ${peer.rank <= 3 ? `peer-rank-badge--top${peer.rank}` : ""}`}>
+                        {rankSuffix(peer.rank)}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="peer-member-cell">
+                        <span className="avatar" style={{ backgroundColor: getAvatarColor(peer.email), width: 26, height: 26, fontSize: 10 }}>
+                          {peer.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()}
+                        </span>
+                        <span className="peer-member-name">{peer.name}</span>
+                        {peer.isCurrentUser && <span className="peer-you-badge">You</span>}
+                      </div>
+                    </td>
+                    <td>
+                      <span className={peer.isCurrentUser ? "peer-value--accent" : ""}>{peer.totalHours.toFixed(1)}h</span>
+                    </td>
+                    <td>{peer.avgPerDay.toFixed(1)}h</td>
+                    <td>{peer.issueCount}</td>
+                    <td>
+                      <span className={`score-badge ${peer.focusScore >= 70 ? "good" : peer.focusScore >= 40 ? "ok" : "low"}`}>
+                        {peer.focusScore}/100
+                      </span>
+                    </td>
+                    <td>{peer.daysLogged}d</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {currentUserPeer && (
+              <div className="peer-summary">
+                {currentUserPeer.rank === 1
+                  ? `You're leading the team with ${currentUserPeer.totalHours.toFixed(1)}h this week.`
+                  : (() => {
+                      const ahead = peers[currentUserPeer.rank - 2];
+                      const gap = ahead ? (ahead.totalHours - currentUserPeer.totalHours).toFixed(1) : "0";
+                      return `You're ranked ${rankSuffix(currentUserPeer.rank)} out of ${peers.length}. ${gap}h behind ${ahead?.name.split(" ")[0] ?? "next"}.`;
+                    })()
+                }
+              </div>
+            )}
+          </section>
+        );
+      })()}
     </div>
   );
 }

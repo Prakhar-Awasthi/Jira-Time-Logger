@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useJira } from "../context/JiraContext";
-import { fetchWorklogs, Worklog } from "../utils/jira";
-import { getTopIssues, computeFocusScore, computeStreak, computeConsistency, computeDayOfWeekPattern, computeForecast, computeOvertimeHeatmap, computeTimeDistribution, computeProjectMomentum, computeFragmentationIndex, computeUnloggedGaps, TopIssue } from "../utils/insights";
+import { fetchWorklogs, fetchIssueEstimates, IssueEstimate, Worklog } from "../utils/jira";
+import { getTopIssues, computeFocusScore, computeStreak, computeConsistency, computeDayOfWeekPattern, computeForecast, computeOvertimeHeatmap, computeTimeDistribution, computeProjectMomentum, computeFragmentationIndex, computeUnloggedGaps, computeBurnoutSignal, BurnoutSignal, TopIssue } from "../utils/insights";
 import { useSettings } from "./useSettings";
 
 export interface DailyTotal {
@@ -101,6 +101,8 @@ export function useAnalytics(weeksBack = 4) {
   const [loading, setLoading] = useState(false);
   const [currentWeekWorklogs, setCurrentWeekWorklogs] = useState<Worklog[]>([]);
   const [previousWeekWorklogs, setPreviousWeekWorklogs] = useState<Worklog[]>([]);
+  const [allRangeWorklogs, setAllRangeWorklogs] = useState<Worklog[]>([]);
+  const [issueEstimates, setIssueEstimates] = useState<IssueEstimate[]>([]);
 
   useEffect(() => {
     if (!credentialsReady) return;
@@ -116,34 +118,39 @@ export function useAnalytics(weeksBack = 4) {
     const rangeEnd = new Date(currentMonday);
     rangeEnd.setDate(rangeEnd.getDate() + 6);
 
-    fetchWorklogs(jiraUrl, email, token, rangeStart, rangeEnd, email, controller.signal)
-      .then((worklogs) => {
-        const weekSummaries: WeekSummary[] = [];
-        for (let i = 0; i < weeksBack; i++) {
-          const weekStart = new Date(rangeStart);
-          weekStart.setDate(weekStart.getDate() + i * 7);
-          weekSummaries.push(computeWeekSummary(worklogs, weekStart));
-        }
-        setWeeks(weekSummaries);
+    function apply(worklogs: Worklog[]) {
+      setAllRangeWorklogs(worklogs);
 
-        const currentWeekStart = currentMonday;
-        const currentWorklogs = worklogs.filter((wl) => {
-          const d = new Date(wl.started);
-          return d >= currentWeekStart;
-        });
-        setCurrentWeekWorklogs(currentWorklogs);
-        setTeamBreakdown(computeTeamBreakdown(currentWorklogs));
+      const weekSummaries: WeekSummary[] = [];
+      for (let i = 0; i < weeksBack; i++) {
+        const weekStart = new Date(rangeStart);
+        weekStart.setDate(weekStart.getDate() + i * 7);
+        weekSummaries.push(computeWeekSummary(worklogs, weekStart));
+      }
+      setWeeks(weekSummaries);
 
-        const prevMonday = new Date(currentMonday);
-        prevMonday.setDate(prevMonday.getDate() - 7);
-        const prevSunday = new Date(prevMonday);
-        prevSunday.setDate(prevSunday.getDate() + 6);
-        const prevWorklogs = worklogs.filter((wl) => {
-          const d = new Date(wl.started);
-          return d >= prevMonday && d <= prevSunday;
-        });
-        setPreviousWeekWorklogs(prevWorklogs);
-      })
+      const currentWorklogs = worklogs.filter((wl) => {
+        const d = new Date(wl.started);
+        return d >= currentMonday;
+      });
+      setCurrentWeekWorklogs(currentWorklogs);
+      setTeamBreakdown(computeTeamBreakdown(currentWorklogs));
+
+      const prevMonday = new Date(currentMonday);
+      prevMonday.setDate(prevMonday.getDate() - 7);
+      const prevSunday = new Date(prevMonday);
+      prevSunday.setDate(prevSunday.getDate() + 6);
+      setPreviousWeekWorklogs(worklogs.filter((wl) => {
+        const d = new Date(wl.started);
+        return d >= prevMonday && d <= prevSunday;
+      }));
+    }
+
+    fetchWorklogs(jiraUrl, email, token, rangeStart, rangeEnd, email, controller.signal, (staleData) => {
+      apply(staleData);
+      setLoading(false);
+    })
+      .then(apply)
       .catch(() => {})
       .finally(() => setLoading(false));
 
@@ -152,6 +159,21 @@ export function useAnalytics(weeksBack = 4) {
 
   const topIssues = useMemo(() => getTopIssues(currentWeekWorklogs, 8), [currentWeekWorklogs]);
   const focusScore = useMemo(() => computeFocusScore(currentWeekWorklogs), [currentWeekWorklogs]);
+
+  const burnoutSignal = useMemo(() => {
+    const fullHeatmap = computeOvertimeHeatmap(allRangeWorklogs, settings.dailyTargetHours);
+    return computeBurnoutSignal(fullHeatmap, settings.dailyTargetHours);
+  }, [allRangeWorklogs, settings.dailyTargetHours]);
+
+  const topIssueKeys = topIssues.map(i => i.issueKey).join(",");
+  useEffect(() => {
+    if (!credentialsReady || topIssues.length === 0) return;
+    const controller = new AbortController();
+    fetchIssueEstimates(jiraUrl, email, token, topIssues.map(i => i.issueKey), controller.signal)
+      .then(setIssueEstimates)
+      .catch(() => {});
+    return () => controller.abort();
+  }, [jiraUrl, email, token, credentialsReady, topIssueKeys]);
   const streak = useMemo(() => computeStreak(currentWeekWorklogs), [currentWeekWorklogs]);
   const consistency = useMemo(() => computeConsistency(currentWeekWorklogs), [currentWeekWorklogs]);
   const dayPattern = useMemo(() => computeDayOfWeekPattern(currentWeekWorklogs), [currentWeekWorklogs]);
@@ -185,5 +207,7 @@ export function useAnalytics(weeksBack = 4) {
     projectMomentum,
     fragmentation,
     unloggedGaps,
+    burnoutSignal,
+    issueEstimates,
   };
 }
