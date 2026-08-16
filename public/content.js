@@ -14,7 +14,7 @@
   style.textContent = `
     #jtl-fab {
       position: fixed;
-      bottom: 28px;
+      bottom: 80px;
       right: 28px;
       z-index: 9998;
       background: #14b8a6;
