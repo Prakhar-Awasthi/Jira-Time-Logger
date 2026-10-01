@@ -213,6 +213,12 @@ The extension uses a 4-layer cache in `src/utils/jira.ts` to minimize latency:
 | Stale-while-revalidate | Expired storage | — | Shows old data instantly; fetches fresh in background |
 | In-flight dedup | Concurrent hooks | — | Two hooks with the same date range share one fetch |
 
+### Cache invalidation
+
+Clicking **Refresh** / **Get Logs** / **Get Report** (Date Range, Weekly, Team Report tabs) invalidates the in-memory and persisted cache before re-fetching, so the button always triggers a real network round-trip instead of replaying cached data inside the TTL window.
+
+Editing or deleting a worklog (`WorklogCard`) invalidates the cache and waits for the invalidation to finish before triggering a refresh, so the updated or removed entry can't reappear from a stale cache read.
+
 ### Incremental sync
 
 After each full fetch the response's `until` cursor is stored in `chrome.storage.local` (`wlCursor_*` prefix). On the next background refresh, instead of re-fetching from `rangeStart`, the client calls `/worklog/updated?since=cursor` to get only worklog IDs created or modified since the last sync, fetches their details, and merges the delta into the cached data. This makes background refreshes significantly faster for large teams. Cursors older than 24 hours are discarded and a full fetch runs instead.

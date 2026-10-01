@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useJira } from "../context/JiraContext";
-import { fetchWorklogs, fetchIssueEstimates, IssueEstimate, Worklog } from "../utils/jira";
+import { fetchWorklogs, fetchIssueEstimates, invalidateWorklogCache, IssueEstimate, Worklog } from "../utils/jira";
 import { getTopIssues, computeFocusScore, computeStreak, computeConsistency, computeDayOfWeekPattern, computeForecast, computeOvertimeHeatmap, computeTimeDistribution, computeProjectMomentum, computeFragmentationIndex, computeUnloggedGaps, computeBurnoutSignal, BurnoutSignal, TopIssue } from "../utils/insights";
 import { useSettings } from "./useSettings";
 
@@ -103,6 +103,28 @@ export function useAnalytics(weeksBack = 4) {
   const [previousWeekWorklogs, setPreviousWeekWorklogs] = useState<Worklog[]>([]);
   const [allRangeWorklogs, setAllRangeWorklogs] = useState<Worklog[]>([]);
   const [issueEstimates, setIssueEstimates] = useState<IssueEstimate[]>([]);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  // Re-fetch when the worklog cache is invalidated externally — either by the Log Time
+  // tab (same page context) or by the Jira page FAB content script (different context,
+  // which can only clear chrome.storage but not the in-memory Map).
+  useEffect(() => {
+    if (typeof chrome === "undefined" || !chrome.storage?.onChanged) return;
+
+    const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
+      const cacheCleared = Object.keys(changes).some(
+        (k) => k.startsWith("wlCache_") && changes[k].newValue === undefined
+      );
+      if (!cacheCleared || !credentialsReady) return;
+      // Clear the in-memory Map too — the content script can only clear storage,
+      // not the RAM cache inside the extension page's JS context.
+      invalidateWorklogCache();
+      setRefreshTick((t) => t + 1);
+    };
+
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, [credentialsReady]);
 
   useEffect(() => {
     if (!credentialsReady) return;
@@ -155,7 +177,7 @@ export function useAnalytics(weeksBack = 4) {
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [jiraUrl, email, token, credentialsReady, weeksBack]);
+  }, [jiraUrl, email, token, credentialsReady, weeksBack, refreshTick]);
 
   const topIssues = useMemo(() => getTopIssues(currentWeekWorklogs, 8), [currentWeekWorklogs]);
   const focusScore = useMemo(() => computeFocusScore(currentWeekWorklogs), [currentWeekWorklogs]);

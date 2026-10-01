@@ -153,18 +153,23 @@ export async function fetchIssueEstimates(
   return results;
 }
 
-export function invalidateWorklogCache(): void {
+export function invalidateWorklogCache(): Promise<void> {
   worklogCache.clear();
   inflightRequests.clear();
   estimateCache.clear();
-  if (typeof chrome !== "undefined" && chrome.storage?.local) {
-    chrome.storage.local.get(null, (items) => {
-      const keysToRemove = Object.keys(items).filter(k =>
-        k.startsWith(WORKLOG_CACHE_STORAGE_PREFIX) || k.startsWith(CURSOR_STORAGE_PREFIX)
-      );
-      if (keysToRemove.length > 0) chrome.storage.local.remove(keysToRemove);
-    });
-  }
+  return new Promise((resolve) => {
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.get(null, (items) => {
+        const keysToRemove = Object.keys(items).filter(k =>
+          k.startsWith(WORKLOG_CACHE_STORAGE_PREFIX) || k.startsWith(CURSOR_STORAGE_PREFIX)
+        );
+        if (keysToRemove.length > 0) chrome.storage.local.remove(keysToRemove, () => resolve());
+        else resolve();
+      });
+    } else {
+      resolve();
+    }
+  });
 }
 
 // --- Persistent issue key cache (chrome.storage.local) ---
@@ -241,7 +246,7 @@ export async function logWork(
     throw new Error(`${issueKey} failed: ${errorText}`);
   }
 
-  invalidateWorklogCache();
+  await invalidateWorklogCache();
 }
 
 export async function updateWorklog(
@@ -270,7 +275,7 @@ export async function updateWorklog(
     })
   });
   if (!res.ok) throw new Error(await res.text());
-  invalidateWorklogCache();
+  await invalidateWorklogCache();
 }
 
 export async function deleteWorklog(
@@ -289,7 +294,7 @@ export async function deleteWorklog(
     }
   });
   if (!res.ok) throw new Error(await res.text());
-  invalidateWorklogCache();
+  await invalidateWorklogCache();
 }
 
 export function formatJiraStarted(dateString: string): string {

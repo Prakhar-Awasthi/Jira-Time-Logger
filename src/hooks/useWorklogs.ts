@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { fetchWorklogs, Worklog, extractUsersFromWorklogs, extractTeamsFromWorklogs } from "../utils/jira";
+import { fetchWorklogs, invalidateWorklogCache, Worklog, extractUsersFromWorklogs, extractTeamsFromWorklogs } from "../utils/jira";
 import { useJira } from "../context/JiraContext";
 
 interface UseWorklogsOptions {
@@ -67,7 +67,9 @@ export function useWorklogs({ startDate, endDate, active }: UseWorklogsOptions):
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    load(controller.signal);
+    invalidateWorklogCache().then(() => {
+      if (!controller.signal.aborted) load(controller.signal);
+    });
   };
 
   return { worklogs, loading, refresh };

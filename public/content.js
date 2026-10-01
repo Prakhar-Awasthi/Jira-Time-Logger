@@ -390,9 +390,13 @@
         throw new Error(detail || `HTTP ${res.status}`);
       }
 
-      // Bust the extension's persistent worklog cache so the Dashboard refreshes
+      // Bust the extension's persistent worklog cache so the Dashboard refreshes.
+      // Removing wlCache_* triggers the onChanged listener in useAnalytics which
+      // also clears the in-memory Map and fires a re-fetch.
       chrome.storage.local.get(null, (items) => {
-        const toRemove = Object.keys(items).filter(k => k.startsWith('wlCache_'));
+        const toRemove = Object.keys(items).filter(
+          k => k.startsWith('wlCache_') || k.startsWith('wlCursor_')
+        );
         if (toRemove.length > 0) chrome.storage.local.remove(toRemove);
       });
 
